@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<meta charset='utf-8'>
+<script src='//d3js.org/d3.v4.min.js'></script>
+<body>
+<script>
+var params = new URLSearchParams(window.location.search);
+
+var width = 960,
+    height = 960;
+
+var svg = d3.select('body').append('svg').attr('width', width).attr('height', height);
+
+var color = d3.scaleOrdinal(d3.schemeCategory20);
+var simulation = d3.forceSimulation(nodes)
+    .force("charge", d3.forceManyBody().strength(-300))
+    .force("link", d3.forceLink(links).distance(70))
+    .force("x", d3.forceX())
+    .force("y", d3.forceY())
+    .velocityDecay(0.95)
+    .alphaTarget(1)
+    .on("tick", ticked);
+var g = svg.append("g").attr("transform", "translate(" + width / 2 + "," + height / 2 + ")"),
+    link = g.append("g").attr("stroke", "rgba(0, 0, 0, 0.2)").attr("stroke-width", 1.5).selectAll(".link"),
+    node = g.append("g").attr("stroke", "#fff").attr("stroke-width", 1.5).selectAll(".node");
+
+var focusNode = null;
+var relatedNodes = d3.set();
+var relationalLinks = [];
+
+function restart() {
+
+  // Apply the general update pattern to the links.
+  link = link.data(links, function(d) { return d.source.id + "-" + d.target.id; });
+
+  // Keep the exiting links connected to the moving remaining nodes.
+  link.exit().transition()
+      .attr("stroke-opacity", 0.5)
+      .attrTween("x1", function(d) { return function() { return d.source.x; }; })
+      .attrTween("x2", function(d) { return function() { return d.target.x; }; })
+      .attrTween("y1", function(d) { return function() { return d.source.y; }; })
+      .attrTween("y2", function(d) { return function() { return d.target.y; }; })
+      .remove();
+
+  link = link.enter().append("line")
+      .attr('opacity', function(d) {
+        return (focusNode === null || relationalLinks.some(function(dd) {return dd === d;}))?1.0:0.2;
+      })
+      .call(function(link) { link.transition().attr("stroke-opacity", 1); })
+    .merge(link);
+
+  // Apply the general update pattern to the nodes.
+  node = node.data(nodes, function(d) { return d.id;});
+
+  node.exit().transition()
+      .attr("r", 0)
+      .remove();
+
+  var enter_node = node.enter().append('g')
+    .attr('opacity', function(d) {return (focusNode === null || relatedNodes.has(d.id))?1.0:0.2;})
+    .call(
+    d3.drag()
+      .on("start", dragstarted)
+      .on("drag", dragged)
+      .on("end", dragended)
+  );
+
+  enter_node.append("circle")
+      .attr("fill", function(d) { return color(d.id); })
+      .call(function(node) { node.transition().attr("r", 8); });
+  enter_node.append("text").text(function(d) {return d.id;})
+    .attr('stroke', 'none').attr('fill', '#444')
+    .attr('font-size', 10)
+    .attr('x', 5)
+    .attr('dominant-baseline', 'middle');
+  node = enter_node.merge(node);
+
+  // Update and restart the simulation.
+  simulation.nodes(nodes);
+  simulation.force("link").links(links);
+  simulation.alpha(1).restart();
+}
+
+function ticked() {
+  node.attr('transform', function(d) {return 'translate('+d.x+','+d.y+')';});
+
+  link.attr("x1", function(d) { return d.source.x; })
+      .attr("y1", function(d) { return d.source.y; })
+      .attr("x2", function(d) { return d.target.x; })
+      .attr("y2", function(d) { return d.target.y; });
+}
+
+var nodes = [];
+var links = [];
+
+
+d3.tsv((params.get('d') || '') + '/' + 'social_map.tsv', function(err, data) {
+  if (err != null) {throw err;}
+  var idx = 0;
+  var name_obj_map = {};
+  console.log(params.get('anim'));
+  if (params.get('anim')) {
+    var advance = function() {
+      if (idx >= data.length) {
+        console.log('DONE');
+        return;
+      }
+      var d = data[idx++];
+      var nameset = d3.set(nodes.map(function(d) {return d.id;}));
+      if (!nameset.has(d.from_name)) {
+        var x = {id: d.from_name};
+        nodes.push(x);
+        name_obj_map[d.from_name] = x;
+        nameset.add(d.from_name);
+      }
+      if (!nameset.has(d.to_name)) {
+        var x = {id: d.to_name};
+        nodes.push(x);
+        name_obj_map[d.to_name] = x;
+        nameset.add(d.to_name);
+      }
+      var lnk = {source: name_obj_map[d.from_name], target: name_obj_map[d.to_name]};
+      if (focusNode !== null) {
+        if (name_obj_map[d.from_name] === focusNode) {
+          relatedNodes.add(d.to_name);
+          node.filter(function(dd) {return dd.id == d.to_name}).attr('opacity', 1.0);
+          relationalLinks.push(lnk);
+        }
+        if (name_obj_map[d.to_name] === focusNode) {
+          relatedNodes.add(d.from_name);
+          node.filter(function(dd) {return dd.id == d.from_name}).attr('opacity', 1.0);
+          relationalLinks.push(lnk);
+        }
+      }
+      links.push(lnk);
+      restart();
+      setTimeout(advance, 200);
+    };
+    advance();
+  } else {
+    var nameset = d3.set();
+    data.forEach(function(d) {
+      if (!nameset.has(d.from_name)) {
+        var x = {id: d.from_name};
+        nodes.push(x);
+        name_obj_map[d.from_name] = x;
+        nameset.add(d.from_name);
+      }
+      if (!nameset.has(d.to_name)) {
+        var x = {id: d.to_name};
+        nodes.push(x);
+        name_obj_map[d.to_name] = x;
+        nameset.add(d.to_name);
+      }
+      var lnk = {source: name_obj_map[d.from_name], target: name_obj_map[d.to_name]};
+      links.push(lnk);
+    });
+    restart();
+  }
+});
+function dragstarted(d) {
+  if (!d3.event.active) simulation.alphaTarget(0.3).restart();
+  d.fx = d.x;
+  d.fy = d.y;
+
+  focusNode = d;
+  relatedNodes = d3.set();
+  relationalLinks = [];
+  link.each(function(lnk) {
+    if (lnk.source === focusNode || lnk.target === focusNode) {
+      relationalLinks.push(lnk);
+      relatedNodes.add(lnk.source.id);
+      relatedNodes.add(lnk.target.id);
+      d3.select(this).attr('opacity', 1.0);
+    } else {
+      d3.select(this).attr('opacity', 0.1);
+    }
+  });
+  node.each(function(nd) {
+    if (relatedNodes.has(nd.id)) {
+      d3.select(this).attr('opacity', 1.0);
+    } else {
+      d3.select(this).attr('opacity', 0.2);
+    }
+  });
+}
+
+function dragged(d) {
+  d.fx = d3.event.x;
+  d.fy = d3.event.y;
+}
+
+function dragended(d) {
+  if (!d3.event.active) simulation.alphaTarget(0);
+  d.fx = null;
+  d.fy = null;
+  focusNode = null;
+  node.attr('opacity', 1.0);
+  link.attr('opacity', 1.0);
+}
+</script>
